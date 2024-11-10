@@ -154,23 +154,23 @@ static int map_resize(MAP_T *pMap) {
     }
 
     for (int i = 0; i < old_length; i++) {
-        struct item bucket = *(pOldBuckets + i);
+        struct item *bucket = pOldBuckets + i;
 
         int entered = 0;
 
-        while(bucket.pNext) {
-            const struct item *next = bucket.pNext;
-            upsert(pMap, bucket.key, bucket.pValue);
+        while(bucket->pNext) {
+            struct item *next = bucket->pNext;
+            upsert(pMap, bucket->key, bucket->pValue);
 
             if (entered > 0) // only free links in the bucket not the original array element
                 free(&bucket);
 
-            bucket = *next;
+            bucket = next;
             entered++;
         }
 
-        if (bucket.key != NULL) // upsert last element in linked list if it exists
-            upsert(pMap, bucket.key, bucket.pValue);
+        if (bucket->key != NULL) // upsert last element in linked list if it exists
+            upsert(pMap, bucket->key, bucket->pValue);
 
         if (entered > 0) // only free links in the bucket not the original array element
             free(&bucket);

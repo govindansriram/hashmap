@@ -16,6 +16,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
 # List of all sources for the shared library
 set(SOURCES
+        src/unity/unity.c
         src/hash_algorithm/hash_algorithms.c
         src/map/map.c
         include/hash.h)
@@ -43,5 +44,8 @@ install(DIRECTORY include/
 include_directories(src/unity)
 
 enable_testing()
-#add_executable(test_array tests/src/array/test_array.c)
-#target_link_libraries(test_array PRIVATE hashmap)
+add_executable(test_hash_algo tests/src/hash_algorithms/test_hash_algorithms.c)
+target_link_libraries(test_hash_algo PRIVATE hashmap)
+
+add_executable(test_map tests/src/map/test_map.c)
+target_link_libraries(test_map PRIVATE hashmap)

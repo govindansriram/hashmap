@@ -13,3 +13,12 @@ unsigned long djb(char unsigned *str) {
 
     return hash;
 }
+
+unsigned long basic(char unsigned *str) {
+    unsigned long hash = 0;
+    int c;
+    while ((c = *str++))
+        hash += c;
+
+    return hash;
+}

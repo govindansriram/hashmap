@@ -6,5 +6,5 @@
 #define HASH_H
 
 unsigned long djb(char unsigned *str);
-
+unsigned long basic(char unsigned *str);
 #endif //HASH_H
