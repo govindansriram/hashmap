@@ -363,6 +363,11 @@ void map_free(MAP_T *pMap) {
     free(pMap);
 }
 
+/**
+ * creates a list of all the key value pairs present in the map
+ * @param map
+ * @return the key value pair pointer or NULL
+ */
 PAIRS_T *map_pairs(MAP_T *map) {
     int len = map->len;
     struct pair *pairs = malloc(len * sizeof(struct pair));
@@ -402,6 +407,10 @@ PAIRS_T *map_pairs(MAP_T *map) {
     return pear;
 }
 
+/**
+ * frees the pairs pointer from memory
+ * @param pairs
+ */
 void pairs_free(PAIRS_T *pairs) {
 
     for (int i = 0; i < pairs->len; i++) {
