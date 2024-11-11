@@ -6,6 +6,7 @@
 #include "hash.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <asm-generic/errno-base.h>
@@ -25,8 +26,34 @@ struct map {
     unsigned long (*pHash_function)(char unsigned *);
 };
 
+int map_capacity(MAP_T *pMap) {
+    return pMap->capacity;
+}
+
+int map_len(MAP_T *pMap) {
+    return pMap->len;
+}
+
 MAP_T *new_standard_map(const int capacity) {
     return new_custom_map(capacity, &djb);
+}
+
+/**
+ * creates a copy of the data on the heap
+ *
+ * @param source a data pointer
+ * @param size the size of all the data belonging to the pointer
+ * @return a new memory pointer on the heap
+ */
+void *heap_copy(void *source, size_t size) {
+    void *dest = malloc(size);
+    if (dest == NULL) {
+        return NULL;
+    }
+
+    // Copy the contents from src to dest
+    memcpy(dest, source, size);
+    return dest;
 }
 
 /**
@@ -87,6 +114,7 @@ static int upsert(MAP_T *pMap, char *key, void *pValue) {
 
     if (strcmp(pBucket->key, key) == 0) { // update case
         free(pBucket->pValue);
+        free(key); // free the second hash allocated key
         pBucket->pValue = pValue;
         return 0;
     }
@@ -102,6 +130,7 @@ static int upsert(MAP_T *pMap, char *key, void *pValue) {
 
     pNext_item->key = key;
     pNext_item->pValue = pValue;
+    pNext_item->pNext = NULL;
 
     while(pBucket->pNext)
         pBucket = pBucket->pNext;
@@ -121,15 +150,28 @@ static int upsert(MAP_T *pMap, char *key, void *pValue) {
  * @param pMap the map being upserted into
  * @param key the key of the data
  * @param pValue the data
+ * @param size the size of the value being stored
  * @return 0 if the upsert was successful
  */
-int map_upsert(MAP_T *pMap, char *key, void *pValue) {
+int map_upsert(MAP_T *pMap, char *key, void *pValue, size_t size) {
 
     if (pMap->len / (double) pMap->capacity >= 0.75) {
         // do resizing
         if (map_resize(pMap) == -1) {
             return -1;
         }
+    }
+
+    key = heap_copy(key, (strlen(key) + 1) * sizeof(char)); //ensure the key is on the heap
+    if (key == NULL) {
+        errno = ENOMEM;
+        return -1;
+    }
+
+    pValue = heap_copy(pValue, size); //ensure the value is on the heap
+    if (pValue == NULL) {
+        errno = ENOMEM;
+        return -1;
     }
 
     return upsert(pMap, key, pValue);
@@ -163,7 +205,7 @@ static int map_resize(MAP_T *pMap) {
             upsert(pMap, bucket->key, bucket->pValue);
 
             if (entered > 0) // only free links in the bucket not the original array element
-                free(&bucket);
+                free(bucket);
 
             bucket = next;
             entered++;
@@ -173,7 +215,7 @@ static int map_resize(MAP_T *pMap) {
             upsert(pMap, bucket->key, bucket->pValue);
 
         if (entered > 0) // only free links in the bucket not the original array element
-            free(&bucket);
+            free(bucket);
     }
 
     free(pOldBuckets); // frees the allocated bucket array
@@ -187,11 +229,15 @@ static int map_resize(MAP_T *pMap) {
  * @param key the key whose data you wish to extract
  * @return a void * to the value if the key is present otherwise NULL
  */
-void *map_get(const MAP_T *pMap, char *key) {
+void *map_get(MAP_T *pMap, char *key) {
     unsigned long hash = (*pMap->pHash_function)((unsigned char *)key);
     hash %= pMap->capacity; //index
 
     struct item *bucket = pMap->pBuckets + hash; // bucket linked list
+
+    if (bucket->key == NULL) { // bucket is entirely empty
+        return NULL;
+    }
 
     while(strcmp(bucket->key, key) != 0) {
         bucket = bucket->pNext;
@@ -220,13 +266,17 @@ int map_delete(MAP_T *pMap, char *key) {
     }
 
     if (strcmp(bucket->key, key) == 0) { // removing the first element
+        free(bucket->key);
         bucket->key = NULL;
+        free(bucket->pValue);
         bucket->pValue = NULL;
 
         if (bucket->pNext != NULL) { // has > 1 elements
-            bucket->key = bucket->pNext->key;
-            bucket->pValue = bucket->pNext->pValue;
-            bucket->pNext = bucket->pNext->pNext;
+            struct item *old_next = bucket->pNext;
+            bucket->key = old_next->key;
+            bucket->pValue = old_next->pValue;
+            bucket->pNext = old_next->pNext;
+            free(old_next);
         }
 
         pMap->len--;
@@ -235,6 +285,9 @@ int map_delete(MAP_T *pMap, char *key) {
 
     struct item *prev = bucket;
     bucket = bucket->pNext;
+
+    if (bucket == NULL)
+        return -1;
 
     while(strcmp(bucket->key, key) != 0) {
         prev = bucket;
@@ -292,6 +345,5 @@ void map_free(MAP_T *pMap) {
     }
 
     free(buckets);
-    free(pMap->pHash_function);
     free(pMap);
 }
