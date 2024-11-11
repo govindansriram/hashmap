@@ -17,6 +17,7 @@ struct item {
     void *pValue;
     char *key;
     struct item *pNext;
+    size_t value_size;
 };
 
 struct map {
@@ -64,7 +65,7 @@ void *heap_copy(void *source, size_t size) {
  * @param pHash_function the function used to generate index hashes
  * @return a new map with a custom hash function if successful othewise NULL
  */
-MAP_T *new_custom_map(const int capacity,  unsigned long (*pHash_function)(char unsigned *)) {
+MAP_T *new_custom_map(const int capacity, unsigned long (*pHash_function)(char unsigned *)) {
     MAP_T *map = malloc(sizeof(MAP_T));
 
     if (map == NULL) {
@@ -95,28 +96,37 @@ MAP_T *new_custom_map(const int capacity,  unsigned long (*pHash_function)(char 
  * @param pValue the data
  * @return 0 if the upsert was successful
  */
-static int upsert(MAP_T *pMap, char *key, void *pValue) {
-
-    unsigned long hash = (*pMap->pHash_function)((unsigned char *)key);
+static int upsert(MAP_T *pMap, char *key, void *pValue, size_t size) {
+    unsigned long hash = (*pMap->pHash_function)((unsigned char *) key);
 
     hash %= pMap->capacity; //index
 
     struct item *pBucket = pMap->pBuckets + hash;
 
-    if (pBucket->key == NULL) { // insert case
+    if (pBucket->key == NULL) {
+        // insert in first index of bucket
         pBucket->key = key;
         pBucket->pValue = pValue;
-
+        pBucket->value_size = size;
         pMap->len++;
 
         return 0;
     }
 
-    if (strcmp(pBucket->key, key) == 0) { // update case
-        free(pBucket->pValue);
-        free(key); // free the second hash allocated key
-        pBucket->pValue = pValue;
-        return 0;
+    struct item *prev = pBucket;
+
+    while (pBucket != NULL) {
+        if (strcmp(pBucket->key, key) == 0) {
+            // update case
+            free(pBucket->pValue);
+            free(key); // free the second hash allocated key
+            pBucket->pValue = pValue;
+            pBucket->value_size = size;
+            return 0;
+        }
+
+        prev = pBucket;
+        pBucket = pBucket->pNext;
     }
 
     // collision case
@@ -131,11 +141,9 @@ static int upsert(MAP_T *pMap, char *key, void *pValue) {
     pNext_item->key = key;
     pNext_item->pValue = pValue;
     pNext_item->pNext = NULL;
+    pNext_item->value_size = size;
 
-    while(pBucket->pNext)
-        pBucket = pBucket->pNext;
-
-    pBucket->pNext = pNext_item;
+    prev->pNext = pNext_item;
     pMap->len++;
 
     return 0;
@@ -154,7 +162,6 @@ static int upsert(MAP_T *pMap, char *key, void *pValue) {
  * @return 0 if the upsert was successful
  */
 int map_upsert(MAP_T *pMap, char *key, void *pValue, size_t size) {
-
     if (pMap->len / (double) pMap->capacity >= 0.75) {
         // do resizing
         if (map_resize(pMap) == -1) {
@@ -168,13 +175,15 @@ int map_upsert(MAP_T *pMap, char *key, void *pValue, size_t size) {
         return -1;
     }
 
-    pValue = heap_copy(pValue, size); //ensure the value is on the heap
-    if (pValue == NULL) {
-        errno = ENOMEM;
-        return -1;
+    if (pValue != NULL) {
+        pValue = heap_copy(pValue, size); //ensure the value is on the heap
+        if (pValue == NULL) {
+            errno = ENOMEM;
+            return -1;
+        }
     }
 
-    return upsert(pMap, key, pValue);
+    return upsert(pMap, key, pValue, size);
 }
 
 /**
@@ -200,9 +209,9 @@ static int map_resize(MAP_T *pMap) {
 
         int entered = 0;
 
-        while(bucket->pNext) {
+        while (bucket->pNext) {
             struct item *next = bucket->pNext;
-            upsert(pMap, bucket->key, bucket->pValue);
+            upsert(pMap, bucket->key, bucket->pValue, bucket->value_size);
 
             if (entered > 0) // only free links in the bucket not the original array element
                 free(bucket);
@@ -212,7 +221,7 @@ static int map_resize(MAP_T *pMap) {
         }
 
         if (bucket->key != NULL) // upsert last element in linked list if it exists
-            upsert(pMap, bucket->key, bucket->pValue);
+            upsert(pMap, bucket->key, bucket->pValue, bucket->value_size);
 
         if (entered > 0) // only free links in the bucket not the original array element
             free(bucket);
@@ -230,16 +239,17 @@ static int map_resize(MAP_T *pMap) {
  * @return a void * to the value if the key is present otherwise NULL
  */
 void *map_get(MAP_T *pMap, char *key) {
-    unsigned long hash = (*pMap->pHash_function)((unsigned char *)key);
+    unsigned long hash = (*pMap->pHash_function)((unsigned char *) key);
     hash %= pMap->capacity; //index
 
     struct item *bucket = pMap->pBuckets + hash; // bucket linked list
 
-    if (bucket->key == NULL) { // bucket is entirely empty
+    if (bucket->key == NULL) {
+        // bucket is entirely empty
         return NULL;
     }
 
-    while(strcmp(bucket->key, key) != 0) {
+    while (strcmp(bucket->key, key) != 0) {
         bucket = bucket->pNext;
 
         if (!bucket)
@@ -256,22 +266,25 @@ void *map_get(MAP_T *pMap, char *key) {
  * @return 0 if the key is present
  */
 int map_delete(MAP_T *pMap, char *key) {
-    unsigned long hash = (*pMap->pHash_function)((unsigned char *)key);
+    unsigned long hash = (*pMap->pHash_function)((unsigned char *) key);
     hash %= pMap->capacity; //index
 
     struct item *bucket = pMap->pBuckets + hash; // bucket linked list
 
-    if (!bucket->key) { // index holds no data
+    if (!bucket->key) {
+        // index holds no data
         return -1;
     }
 
-    if (strcmp(bucket->key, key) == 0) { // removing the first element
+    if (strcmp(bucket->key, key) == 0) {
+        // removing the first element
         free(bucket->key);
         bucket->key = NULL;
         free(bucket->pValue);
         bucket->pValue = NULL;
 
-        if (bucket->pNext != NULL) { // has > 1 elements
+        if (bucket->pNext != NULL) {
+            // has > 1 elements
             struct item *old_next = bucket->pNext;
             bucket->key = old_next->key;
             bucket->pValue = old_next->pValue;
@@ -289,10 +302,11 @@ int map_delete(MAP_T *pMap, char *key) {
     if (bucket == NULL)
         return -1;
 
-    while(strcmp(bucket->key, key) != 0) {
+    while (strcmp(bucket->key, key) != 0) {
         prev = bucket;
 
-        if (!bucket->pNext) { // cannot find item
+        if (!bucket->pNext) {
+            // cannot find item
             return -1;
         }
 
@@ -305,7 +319,8 @@ int map_delete(MAP_T *pMap, char *key) {
     free(bucket->pValue);
     free(bucket);
 
-    if (!next) { // item is the last element in the linked list
+    if (!next) {
+        // item is the last element in the linked list
         bucket = NULL;
         prev->pNext = NULL;
         pMap->len--;
@@ -324,7 +339,6 @@ int map_delete(MAP_T *pMap, char *key) {
  * @param pMap the map you wish to free
  */
 void map_free(MAP_T *pMap) {
-
     struct item *buckets = pMap->pBuckets;
 
     for (int i = 0; i < pMap->capacity; i++) {
@@ -335,7 +349,8 @@ void map_free(MAP_T *pMap) {
         free(bucket->key);
         bucket = bucket->pNext;
 
-        while(bucket) { // free proceeding elements and properties
+        while (bucket) {
+            // free proceeding elements and properties
             free(bucket->key);
             free(bucket->pValue);
             struct item *next = bucket->pNext;
@@ -346,4 +361,55 @@ void map_free(MAP_T *pMap) {
 
     free(buckets);
     free(pMap);
+}
+
+PAIRS_T *map_pairs(MAP_T *map) {
+    int len = map->len;
+    struct pair *pairs = malloc(len * sizeof(struct pair));
+    struct pair *pPair = pairs;
+
+    for (int i = 0; i < map->capacity; i++) {
+        struct item *bucket = map->pBuckets + i;
+
+        if (bucket->key != NULL) {
+            struct item *pLink = bucket;
+            while (pLink) {
+                char *pair_key = heap_copy(pLink->key, (strlen(pLink->key) + 1) * sizeof(char));
+                if (pair_key == NULL) {
+                    errno = ENOMEM;
+                    return NULL;
+                }
+
+                char *pair_value = heap_copy(pLink->pValue, pLink->value_size);
+
+                if (pair_value == NULL) {
+                    errno = ENOMEM;
+                    return NULL;
+                }
+
+                pPair->key = pair_key;
+                pPair->pValue = pair_value;
+                pLink = pLink->pNext;
+                pPair++;
+            }
+        }
+    }
+
+    PAIRS_T *pear = malloc(sizeof(PAIRS_T));
+    pear->len = len;
+    pear->pPairs = pairs;
+
+    return pear;
+}
+
+void pairs_free(PAIRS_T *pairs) {
+
+    for (int i = 0; i < pairs->len; i++) {
+        struct pair pr = pairs->pPairs[i];
+        free(pr.key);
+        free(pr.pValue);
+    }
+
+    free(pairs->pPairs);
+    free(pairs);
 }
